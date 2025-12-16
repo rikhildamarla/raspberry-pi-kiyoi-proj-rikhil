@@ -149,13 +149,13 @@ function App() {
                 setClassrooms(prevClassrooms => {
                   const updatedClassrooms = prevClassrooms.map(classroom => {
                     if (classroom.id === activeClassroom) {
-                      // Check if student already assigned
+                      // FIXED: Check if student NAME already assigned (not ID)
                       const alreadyAssigned = classroom.desks.some(
-                        desk => desk.studentId === studentId
+                        desk => desk.studentName === studentName
                       );
                       
                       if (alreadyAssigned) {
-                        console.log(`Student ${studentName} already assigned`);
+                        console.log(`⚠️ Student ${studentName} already assigned to a desk`);
                         return classroom;
                       }
                       
@@ -163,7 +163,7 @@ function App() {
                       const emptyDesk = classroom.desks.find(desk => !desk.studentName);
                       
                       if (emptyDesk) {
-                        console.log(`Assigning ${studentName} to desk ${emptyDesk.id}`);
+                        console.log(`✅ Assigning ${studentName} to desk ${emptyDesk.id}`);
                         return {
                           ...classroom,
                           desks: classroom.desks.map(desk => 
@@ -173,7 +173,7 @@ function App() {
                           )
                         };
                       } else {
-                        console.log('No empty desks available');
+                        console.log('❌ No empty desks available');
                       }
                     }
                     return classroom;
@@ -181,7 +181,7 @@ function App() {
                   return updatedClassrooms;
                 });
               } else {
-                console.log('No active classroom selected');
+                console.log('⚠️ No active classroom selected');
               }
             }
           }
@@ -232,11 +232,62 @@ function App() {
     }
     
     const classroom = classrooms.find(c => c.id === activeClassroom);
+    
+    // Check which students are already assigned
+    const assignedStudents = new Set(
+      classroom.desks
+        .filter(desk => desk.studentName)
+        .map(desk => desk.studentName)
+    );
+    
+        const sampleNames = [
+      "Rikhil Damarla",
+      "Pranati Alladi",
+      "Aditya Anirudh",
+      "Dheeksha Baskaran",
+      "Rishab Burli",
+      "Ryan Chakravarthy",
+      "Giulia Beatriz Colaco Silva",
+      "Ryan Fu",
+      "Akshaan Garg",
+      "Rohan Garg",
+      "Jonathan He",
+      "Anya Jain",
+      "Aditya Kamath",
+      "Shravani Kurapati",
+      "Diego Laredo",
+      "Cindy Long",
+      "Leela Mallya",
+      "Utsav Manpuria",
+      "Advika Modi",
+      "Abhishek More",
+      "Harshith Mummidivarapu",
+      "Veer Nanda",
+      "Mihir Rao",
+      "Atishay Sati",
+      "Gurchit Singh",
+      "Alice Su",
+      "Aarush Tahiliani",
+      "Kevin Tam",
+      "Raja Varenya Telikicherla",
+      "Kavya Vijayabaskar",
+      "Nivedita Warrier",
+      "Parth Yadav"
+    ];
+
+    
+    // Find a student that hasn't been assigned yet
+    const availableNames = sampleNames.filter(name => !assignedStudents.has(name));
+    
+    if (availableNames.length === 0) {
+      alert('All test students have already been scanned!');
+      return;
+    }
+    
     const emptyDesk = classroom?.desks.find(desk => !desk.studentName);
     
     if (emptyDesk) {
-      const sampleNames = ["Rikhil Damarla", "Pranati Alladi", "Aditya Anirudh"];
-      const randomName = sampleNames[Math.floor(Math.random() * sampleNames.length)];
+      const randomName = availableNames[Math.floor(Math.random() * availableNames.length)];
       const randomId = `ID${Math.floor(Math.random() * 10000)}`;
       
       console.log('Test scan:', randomName, randomId);

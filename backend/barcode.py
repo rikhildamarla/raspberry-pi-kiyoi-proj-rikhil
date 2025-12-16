@@ -66,6 +66,9 @@ last_student_name = None
 last_scan_time = 0
 SCAN_COOLDOWN = 3  # Seconds between scans of the same student
 
+# Track which students have already been scanned locally
+scanned_students = set()
+
 
 def send_frame_to_flask(frame):
     """Send camera frame to Flask server in a separate thread"""
@@ -97,7 +100,20 @@ def send_to_flask(student_name, student_id):
         )
         if response.status_code == 200:
             print(f"✅ Sent to React: {student_name} - {student_id}")
+            scanned_students.add(student_name)  # Track locally
             return True
+        elif response.status_code == 400:
+            # Check if it was rejected as duplicate
+            try:
+                data = response.json()
+                if data.get('alreadyScanned'):
+                    print(f"⚠️ Student already scanned: {student_name}")
+                    scanned_students.add(student_name)  # Track locally
+                else:
+                    print(f"⚠️ Flask server error: {data.get('message', 'Unknown error')}")
+            except:
+                print(f"⚠️ Flask server error: {response.status_code}")
+            return False
         else:
             print(f"⚠️ Flask server error: {response.status_code}")
             return False
@@ -115,19 +131,13 @@ def extract_student_name(frame):
     gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     text = pytesseract.image_to_string(gray, config='--psm 6')
 
-    print(f"DEBUG - Raw OCR text: {text}")  # Debug: see what OCR reads
+    print(f"DEBUG - Raw OCR text: {text}")
     
-    # Convert to lowercase for matching
     text_lower = text.lower()
     
-    # Check if any student name appears in the text
     for student_name in STUDENT_NAMES:
         student_lower = student_name.lower()
-        
-        # Split into parts and check if they appear in the text
         name_parts = student_lower.split()
-        
-        # Check if all parts of the name appear in the text
         all_parts_found = all(part in text_lower for part in name_parts if len(part) >= 3)
         
         if all_parts_found:
@@ -180,43 +190,63 @@ while True:
         barcode_data = barcode.data.decode('utf-8')
         student_name = extract_student_name(frame)
         current_time = time.time()
+        
+        # Check if student has already been scanned
+        already_scanned = student_name in scanned_students
 
-        # Check if this is a new scan (cooldown period)
-        if (student_name != last_student_name or 
-            current_time - last_scan_time > SCAN_COOLDOWN):
-            
-            print(f"\n📋 ID: {barcode_data}")
-            print(f"👤 Student Name: {student_name}\n")
-
-            # Send to Flask server (and thus to React)
-            if student_name in STUDENT_NAMES:
-                send_to_flask(student_name, barcode_data)
-            
-            last_barcode_data = barcode_data
-            last_student_name = student_name
-            last_scan_time = current_time
-
-            # Save photo if detected
-            if photo_rect:
-                px, py, pw, ph = photo_rect
-                photo_crop = frame[py:py+ph, px:px+pw]
-                safe_name = student_name.replace(" ", "_")
-                filename = f"student_photos/{barcode_data.replace(' ', '_')}_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                cv2.imwrite(filename, photo_crop)
-                print(f"📸 Saved student photo: {filename}")
-
+        # Draw barcode rectangle with appropriate color
         x, y, w, h = barcode.rect
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(frame, student_name, (x, y - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        if already_scanned:
+            # Orange/yellow for already scanned
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 165, 255), 2)
+            cv2.putText(frame, f"{student_name} (ALREADY SCANNED)", (x, y - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+            cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+        else:
+            # Check if this is a new scan (cooldown period)
+            if (student_name != last_student_name or 
+                current_time - last_scan_time > SCAN_COOLDOWN):
+                
+                print(f"\n📋 ID: {barcode_data}")
+                print(f"👤 Student Name: {student_name}")
 
+                # Send to Flask server (and thus to React)
+                if student_name in STUDENT_NAMES:
+                    send_to_flask(student_name, barcode_data)
+                    print(f"📊 Total unique students scanned: {len(scanned_students)}\n")
+                
+                last_barcode_data = barcode_data
+                last_student_name = student_name
+                last_scan_time = current_time
+
+                # Save photo if detected
+                if photo_rect:
+                    px, py, pw, ph = photo_rect
+                    photo_crop = frame[py:py+ph, px:px+pw]
+                    safe_name = student_name.replace(" ", "_")
+                    filename = f"student_photos/{barcode_data.replace(' ', '_')}_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    cv2.imwrite(filename, photo_crop)
+                    print(f"📸 Saved student photo: {filename}")
+
+            # Green for new students
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(frame, student_name, (x, y - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    # Display info on screen
     if last_student_name:
         cv2.putText(frame, f"Last scanned: {last_student_name}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         cv2.putText(frame, f"ID: {last_barcode_data}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+    
+    # Display unique student count
+    cv2.putText(frame, f"Unique students: {len(scanned_students)}", (10, 90),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
     # Send camera frame to Flask (throttled to every 3rd frame for performance)
     frame_counter += 1
@@ -229,3 +259,4 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+print(f"\n📊 Session complete. Total unique students scanned: {len(scanned_students)}")

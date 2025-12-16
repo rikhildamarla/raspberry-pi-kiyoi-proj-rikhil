@@ -70,6 +70,9 @@ last_student_name = None
 last_scan_time = 0
 SCAN_COOLDOWN = 3  # Seconds between scans of the same student
 
+# Track which students have already been scanned in this session
+scanned_students = set()  # Set of student names that have been scanned
+
 # Track unknown student reads per barcode ID
 unknown_read_count = {}  # {barcode_id: count}
 UNKNOWN_THRESHOLD = 15  # Number of failed reads before accepting as "Unknown Student"
@@ -157,6 +160,9 @@ def camera_scan_loop():
             # Check if student name is in the roster
             name_is_valid = student_name in STUDENT_NAMES
             
+            # Check if this student has already been scanned
+            already_scanned = student_name in scanned_students
+            
             # Handle unknown students with tracking
             if not name_is_valid and student_name == "Unknown Student":
                 # Initialize or increment counter for this barcode
@@ -185,47 +191,64 @@ def camera_scan_loop():
                 if barcode_data in unknown_read_count:
                     del unknown_read_count[barcode_data]
 
-            # Check if this is a new scan (cooldown period)
-            if name_is_valid and (student_name != last_student_name or 
-                current_time - last_scan_time > SCAN_COOLDOWN):
-                
-                print(f"\n📋 ID: {barcode_data}")
-                print(f"👤 Student Name: {student_name}")
-
-                # Add to queue (either verified student or unknown after threshold)
-                student_queue.put({
-                    'studentName': student_name,
-                    'studentId': barcode_data
-                })
-                print(f"✅ Added to queue: {student_name} - {barcode_data}\n")
-                
-                last_barcode_data = barcode_data
-                last_student_name = student_name
-                last_scan_time = current_time
-
-                # Save photo if detected
-                if photo_rect:
-                    px, py, pw, ph = photo_rect
-                    photo_crop = frame[py:py+ph, px:px+pw]
-                    safe_name = student_name.replace(" ", "_")
-                    filename = f"student_photos/{barcode_data.replace(' ', '_')}_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    cv2.imwrite(filename, photo_crop)
-                    print(f"📸 Saved student photo: {filename}")
-
             # Draw barcode rectangle and info
             x, y, w, h = barcode.rect
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.putText(frame, student_name, (x, y - 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            # Check if already scanned and show appropriate visual feedback
+            if already_scanned:
+                # Yellow/orange color for already scanned students
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 165, 255), 2)
+                cv2.putText(frame, f"{student_name} (ALREADY SCANNED)", (x, y - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+            else:
+                # Check if this is a new scan (cooldown period)
+                if name_is_valid and (student_name != last_student_name or 
+                    current_time - last_scan_time > SCAN_COOLDOWN):
+                    
+                    print(f"\n📋 ID: {barcode_data}")
+                    print(f"👤 Student Name: {student_name}")
 
-        # Draw last scanned info
+                    # Add to queue and mark as scanned
+                    student_queue.put({
+                        'studentName': student_name,
+                        'studentId': barcode_data
+                    })
+                    scanned_students.add(student_name)  # Track this student
+                    print(f"✅ Added to queue: {student_name} - {barcode_data}")
+                    print(f"📊 Total unique students scanned: {len(scanned_students)}\n")
+                    
+                    last_barcode_data = barcode_data
+                    last_student_name = student_name
+                    last_scan_time = current_time
+
+                    # Save photo if detected
+                    if photo_rect:
+                        px, py, pw, ph = photo_rect
+                        photo_crop = frame[py:py+ph, px:px+pw]
+                        safe_name = student_name.replace(" ", "_")
+                        filename = f"student_photos/{barcode_data.replace(' ', '_')}_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                        cv2.imwrite(filename, photo_crop)
+                        print(f"📸 Saved student photo: {filename}")
+
+                # Green color for new/valid students
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(frame, student_name, (x, y - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"ID: {barcode_data}", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        # Draw last scanned info and total count
         if last_student_name:
             cv2.putText(frame, f"Last scanned: {last_student_name}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             cv2.putText(frame, f"ID: {last_barcode_data}", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+        
+        # Draw total unique students scanned
+        cv2.putText(frame, f"Unique students: {len(scanned_students)}", (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
         # Encode frame as JPEG and store
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -251,11 +274,21 @@ def student_scan():
         student_id = data.get('studentId')
         
         if student_name and student_id:
+            # Check if student already scanned
+            if student_name in scanned_students:
+                print(f"⚠️ Student already scanned: {student_name}")
+                return jsonify({
+                    'success': False, 
+                    'message': 'Student already scanned',
+                    'alreadyScanned': True
+                }), 400
+            
             print(f"✅ Received scan: {student_name} - {student_id}")
             student_queue.put({
                 'studentName': student_name,
                 'studentId': student_id
             })
+            scanned_students.add(student_name)
             return jsonify({'success': True, 'message': 'Student data received'}), 200
         else:
             return jsonify({'success': False, 'message': 'Missing data'}), 400
@@ -330,8 +363,27 @@ def camera_status():
         'last_scan': {
             'name': last_student_name,
             'id': last_barcode_data
-        } if last_student_name else None
+        } if last_student_name else None,
+        'total_scanned': len(scanned_students),
+        'scanned_students': list(scanned_students)
     }), 200
+
+
+@app.route('/api/reset-scans', methods=['POST'])
+def reset_scans():
+    """Reset all scanned students (clear the session)"""
+    global scanned_students, last_barcode_data, last_student_name, unknown_read_count
+    scanned_students.clear()
+    unknown_read_count.clear()
+    last_barcode_data = None
+    last_student_name = None
+    
+    # Clear the queue
+    while not student_queue.empty():
+        student_queue.get()
+    
+    print("🔄 Reset all scanned students")
+    return jsonify({'success': True, 'message': 'Scan session reset'}), 200
 
 
 @app.route('/api/health', methods=['GET'])
